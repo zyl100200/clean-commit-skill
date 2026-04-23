@@ -109,6 +109,21 @@ Before running `git commit`, `git commit --amend`, or proposing a message to the
 
 When the agent itself invokes `git commit -m "..."` or uses a heredoc, the same scan applies to the exact string being passed.
 
+## IDE/CLI-level attribution (out-of-band)
+
+Some IDEs or agent CLIs append their own trailer to commits *after* the message leaves the agent, by injecting flags like `--trailer "Made-with: Cursor"` into `git commit`. The resulting line appears in the committed message but was never part of the string the agent wrote, so the pre-commit self-check above cannot see it.
+
+Detection:
+
+- After any commit, if the agent has reason to verify the result (or the user reports a trailer they didn't expect), run `git log -1 --format=%B` and scan that output against the same forbidden list.
+- Example tell-tale trailers injected by IDEs/CLIs: `Made-with: Cursor`, `X-Cursor: ...`, vendor-specific `X-<Tool>: ...` lines.
+
+When an out-of-band trailer is observed:
+
+1. Tell the user plainly: this line was added by the IDE/CLI, not written by the agent; the skill's message-content rules cannot block it. Point them at the README's "Known pitfall: IDE-level attribution" section for the exact fix for their tool.
+2. For Cursor specifically, the fix is two settings (IDE toggle and CLI config file). With the user's approval, the agent may apply the CLI config fix by writing `~/.cursor/cli-config.json` with `commitAttribution: false` and `prAttribution: false`. Do not apply it silently.
+3. If the offending commit has **not** been pushed, offer to `git commit --amend` with the cleaned message after the injection source is disabled. If it **has** been pushed, follow the "Amending existing history" rules below — do not rewrite pushed history without explicit confirmation.
+
 ## Amending existing history
 
 Do not rewrite or force-push existing commits just to strip AI attribution from history. History rewrites are destructive and may not be wanted.

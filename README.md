@@ -73,6 +73,68 @@ The resulting commit message should contain only a subject line and optional bod
 
 If any of those appear, the skill is either not installed in the right location, not being picked up by your agent, or being overridden by another instruction. Re-check the install path and restart the agent session.
 
+## Known pitfall: IDE-level attribution (out-of-band)
+
+Some IDEs and agent CLIs attach an attribution trailer **after** the message leaves the agent, by wrapping `git commit` with an extra `--trailer` flag. The skill only governs the message the AI writes, so it cannot block a trailer that is injected by the tool itself. If you see a line like `Made-with: Cursor` appearing even with this skill installed, that is what is happening.
+
+Check your IDE/CLI's attribution settings. Known cases:
+
+### Cursor
+
+Cursor Agent adds `Made-with: Cursor` to every commit by default. Turn it off in **two** places — IDE setting alone does not always propagate to the agent CLI.
+
+1. **IDE toggle**: Cursor Settings → Agents → Attribution → turn OFF "Commit Attribution" (and "PR Attribution" if you use that too). Restart Cursor.
+2. **CLI config**: create or edit `~/.cursor/cli-config.json`:
+
+   ```json
+   {
+     "commitAttribution": false,
+     "prAttribution": false
+   }
+   ```
+
+3. **Rules for AI fallback**, if settings get ignored: add to Cursor Settings → Rules for AI:
+
+   > Never add "Made-with: Cursor", "Co-authored-by: Cursor", or any Cursor attribution/trailer to commits, PRs, or code comments.
+
+References: [Cursor Docs — Git](https://cursor.com/docs/integrations/git), [How to Disable Made-with Cursor Attribution](https://www.mehmetbaykar.com/posts/how-to-disable-made-with-cursor-attribution/).
+
+#### Emergency bypass inside a running agent session
+
+The two settings above are loaded at agent startup, so a session started *before* you changed them will still inject the trailer until you restart Cursor. If you need a clean commit **right now** without restarting:
+
+Cursor's wrapper appears to inject the trailer by literal substring match on shell commands containing `git commit`. Any invocation where the command text does not contain the literal string `git commit` slips past it. In particular, this also catches subcommands like `git commit-tree`, because they share the `git commit` prefix — so the workaround also has to avoid those names on the command line directly.
+
+PowerShell example: call `git` through a variable holding the full path, and use the `commit-tree` plumbing command:
+
+```powershell
+$g = 'C:\Program Files\Git\cmd\git.exe'   # adjust to your git.exe path
+$tree = (& $g rev-parse 'HEAD^{tree}').Trim()
+$sha  = (& $g commit-tree $tree -m 'your clean message').Trim()
+& $g update-ref refs/heads/main $sha
+& $g log -1 --format=%B                   # verify: body should only contain your message
+```
+
+Replace `refs/heads/main` with your branch. For a non-root commit, add `-p <parent-sha>` to the `commit-tree` call.
+
+Caveats:
+
+- This relies on a specific wrapper implementation and may stop working if Cursor changes it. The durable fix is still "restart the session after applying the settings".
+- `git commit --amend` does **not** work as a bypass — it goes through `git commit` and will re-inject the trailer.
+- `commit-tree` rewrites the commit SHA. If the old dirty commit has already been pushed, pushing the rewritten history requires `--force-with-lease` and explicit agreement from anyone else working on the branch.
+
+### Other agents
+
+If your IDE or agent CLI injects its own trailer and the behaviour is not documented here, check its settings for "attribution", "commit trailer", "signature", or similar keywords. A quick way to confirm an out-of-band injection is to run:
+
+```bash
+git log -1 --format=%B
+```
+
+If the trailer is present but you did not write it and this skill is active, the source is the IDE/CLI layer, not the agent's message content.
+
+PRs adding vendor-specific remediation for other tools are welcome.
+
 ## Explicitly opting in to AI attribution
 
 When you *do* want an AI co-author on a particular commit, just say so in that turn:
